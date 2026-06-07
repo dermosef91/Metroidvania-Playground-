@@ -62,13 +62,8 @@ export class WorldScene extends Phaser.Scene {
     // Campfire particle emitter
     this._buildCampfireParticles();
 
-    // Entry fade in
-    this.cameras.main.setAlpha(0);
-    this.tweens.add({
-      targets: this.cameras.main,
-      alpha: 1,
-      duration: 800,
-    });
+    // Entry fade in — fadeIn resets the camera fade effect cleanly
+    this.cameras.main.fadeIn(600, 0, 0, 0);
 
     // Set initial UI label
     this.game.events.emit('ui-area-label', 'Campsite — Dorf Tirol');
@@ -105,23 +100,32 @@ export class WorldScene extends Phaser.Scene {
   _touchRight = false;
 
   _setupGameEvents() {
-    this.game.events.on('touch-left', (v) => { this._touchLeft = v; });
-    this.game.events.on('touch-right', (v) => { this._touchRight = v; });
-    this.game.events.on('touch-jump', () => { this._player.doJump(); });
-    this.game.events.on('touch-interact', () => { this._tryInteract(); });
-    this.game.events.on('touch-lamp', () => { this._player.toggleHeadlamp(); });
-    this.game.events.on('dialogue-advance', () => { this._dialogue.advance(); });
-    this.game.events.on('dialogue-close', () => { this._dialogueLocked = false; });
-    this.game.events.on('dialogue-open', () => { this._dialogueLocked = true; });
+    const ge = this.game.events;
+    this._geHandlers = [];
+    const on = (evt, fn) => { ge.on(evt, fn); this._geHandlers.push([evt, fn]); };
 
-    this.game.events.on('ability-gained', (key) => {
+    on('touch-left', (v) => { this._touchLeft = v; });
+    on('touch-right', (v) => { this._touchRight = v; });
+    on('touch-jump', () => { this._player.doJump(); });
+    on('touch-interact', () => { this._tryInteract(); });
+    on('touch-lamp', () => { this._player.toggleHeadlamp(); });
+    on('dialogue-advance', () => { this._dialogue.advance(); });
+    on('dialogue-close', () => { this._dialogueLocked = false; });
+    on('dialogue-open', () => { this._dialogueLocked = true; });
+
+    on('ability-gained', (key) => {
       if (key === 'has_headlamp') {
         this._onHeadlampGained();
       }
     });
 
-    this.game.events.on('set-player-light-radius', (radius) => {
+    on('set-player-light-radius', (radius) => {
       this._darkness.setLightRadius(this._playerLight, radius, 700);
+    });
+
+    // Remove global listeners when this scene shuts down (e.g. restart)
+    this.events.once('shutdown', () => {
+      for (const [evt, fn] of this._geHandlers) ge.off(evt, fn);
     });
 
     // Keyboard interact / lamp
@@ -454,11 +458,8 @@ export class WorldScene extends Phaser.Scene {
 
     this.time.delayedCall(400, () => {
       this._dialogue.show(endPages, () => {
-        // Final black card with title
-        this.cameras.main.fade(1000, 0, 0, 0);
-        this.time.delayedCall(1100, () => {
-          this._showEndCard();
-        });
+        // The end card draws its own full-screen black overlay (no camera fade)
+        this._showEndCard();
       });
     });
   }
