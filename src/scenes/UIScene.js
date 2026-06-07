@@ -9,20 +9,31 @@ export class UIScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
 
+    // Support simultaneous touches (move + jump at the same time)
+    this.input.addPointer(3);
+
     this._dialogueOpen = false;
     this._abilities = new Set();
 
     // Listen for game events
-    this.game.events.on('dialogue-open', () => { this._dialogueOpen = true; });
-    this.game.events.on('dialogue-close', () => { this._dialogueOpen = false; });
-    this.game.events.on('ability-gained', (key) => {
+    const ge = this.game.events;
+    this._geHandlers = [];
+    const on = (evt, fn) => { ge.on(evt, fn); this._geHandlers.push([evt, fn]); };
+
+    on('dialogue-open', () => { this._dialogueOpen = true; });
+    on('dialogue-close', () => { this._dialogueOpen = false; });
+    on('ability-gained', (key) => {
       this._abilities.add(key);
       this._updateAbilityBar();
     });
-    this.game.events.on('show-interact-hint', (show) => {
+    on('show-interact-hint', (show) => {
       this.interactHint.setVisible(show);
     });
-    this.game.events.on('set-player-light-radius', () => {});
+    on('ui-area-label', (text) => { this.setAreaLabel(text); });
+
+    this.events.once('shutdown', () => {
+      for (const [evt, fn] of this._geHandlers) ge.off(evt, fn);
+    });
 
     // Touch control zones
     this._buildTouchControls(W, H);
@@ -91,9 +102,8 @@ export class UIScene extends Phaser.Scene {
       fontFamily: 'monospace',
       fontSize: `${size}px`,
       color: '#ffffff',
-      alpha: 0.35,
       resolution: 2,
-    }).setOrigin(0.5).setDepth(193);
+    }).setOrigin(0.5).setDepth(193).setAlpha(0.35);
     return txt;
   }
 
@@ -117,74 +127,88 @@ export class UIScene extends Phaser.Scene {
   }
 
   _setupTouchInput(W, H, zoneW, zoneH, zoneY, RX, RY) {
+    // Remember geometry for per-frame polling
+    this._zoneW = zoneW;
+    this._zoneY = zoneY;
+    this._RX = RX;
+    this._RY = RY;
+
+    // Discrete buttons — pointerdown fires once per pointer, so this is
+    // multitouch-safe (jump while moving, etc.)
     this.input.on('pointerdown', (ptr) => {
       if (this._dialogueOpen) {
         this.game.events.emit('dialogue-advance');
         return;
       }
-      this._handleTouchDown(ptr, W, H, zoneW, zoneH, zoneY, RX, RY);
-    });
-
-    this.input.on('pointermove', (ptr) => {
-      if (!ptr.isDown || this._dialogueOpen) return;
-      this._handleTouchDown(ptr, W, H, zoneW, zoneH, zoneY, RX, RY);
-    });
-
-    this.input.on('pointerup', (ptr) => {
-      this.game.events.emit('touch-left', false);
-      this.game.events.emit('touch-right', false);
+      this._handleButtonTap(ptr.x, ptr.y);
     });
   }
 
-  _handleTouchDown(ptr, W, H, zoneW, zoneH, zoneY, RX, RY) {
-    const x = ptr.x;
-    const y = ptr.y;
+  _handleButtonTap(x, y) {
+    const RX = this._RX;
+    const RY = this._RY;
 
-    // Left movement zone
-    if (x < zoneW && y > zoneY) {
-      const mid = zoneW * 0.5;
-      if (x < mid) {
-        this.game.events.emit('touch-left', true);
-        this.game.events.emit('touch-right', false);
-        this._arrowLeft.setAlpha(0.9);
-        this._arrowRight.setAlpha(0.35);
-      } else {
-        this.game.events.emit('touch-right', true);
-        this.game.events.emit('touch-left', false);
-        this._arrowRight.setAlpha(0.9);
-        this._arrowLeft.setAlpha(0.35);
-      }
-      return;
-    }
-
-    // Jump button zone
-    if (Phaser.Math.Distance.Between(x, y, RX, RY) < 26) {
+    // Jump button
+    if (Phaser.Math.Distance.Between(x, y, RX, RY) < 28) {
       this.game.events.emit('touch-jump');
-      this._jumpBtn.bg.clear();
-      this._jumpBtn.bg.fillStyle(0x4488ff, 0.7);
-      this._jumpBtn.bg.fillCircle(0, 0, 18);
-      this.time.delayedCall(150, () => {
-        this._jumpBtn.bg.clear();
-        this._jumpBtn.bg.fillStyle(0x2255aa, 0.45);
-        this._jumpBtn.bg.fillCircle(0, 0, 18);
-        this._jumpBtn.bg.lineStyle(1, 0xffffff, 0.2);
-        this._jumpBtn.bg.strokeCircle(0, 0, 18);
-      });
+      this._flashJump();
       return;
     }
 
-    // Interact button zone
-    if (Phaser.Math.Distance.Between(x, y, RX - 40, RY - 12) < 22) {
+    // Interact button
+    if (Phaser.Math.Distance.Between(x, y, RX - 40, RY - 12) < 24) {
       this.game.events.emit('touch-interact');
       return;
     }
 
     // Lamp button
     if (this._lampBtn.container.visible &&
-        Phaser.Math.Distance.Between(x, y, RX - 22, RY - 44) < 22) {
+        Phaser.Math.Distance.Between(x, y, RX - 22, RY - 44) < 24) {
       this.game.events.emit('touch-lamp');
       return;
     }
+  }
+
+  _flashJump() {
+    this._jumpBtn.bg.clear();
+    this._jumpBtn.bg.fillStyle(0x4488ff, 0.7);
+    this._jumpBtn.bg.fillCircle(0, 0, 18);
+    this.time.delayedCall(150, () => {
+      this._jumpBtn.bg.clear();
+      this._jumpBtn.bg.fillStyle(0x2255aa, 0.45);
+      this._jumpBtn.bg.fillCircle(0, 0, 18);
+      this._jumpBtn.bg.lineStyle(1, 0xffffff, 0.2);
+      this._jumpBtn.bg.strokeCircle(0, 0, 18);
+    });
+  }
+
+  // Poll all active pointers each frame so the movement zone is reliable
+  // and works alongside simultaneous button presses.
+  update() {
+    if (this._dialogueOpen) {
+      this.game.events.emit('touch-left', false);
+      this.game.events.emit('touch-right', false);
+      if (this._arrowLeft) this._arrowLeft.setAlpha(0.35);
+      if (this._arrowRight) this._arrowRight.setAlpha(0.35);
+      return;
+    }
+
+    const pts = this.input.manager.pointers.slice();
+    if (this.input.mousePointer) pts.push(this.input.mousePointer);
+
+    let moveDir = 0; // -1 = left, 1 = right
+    for (const p of pts) {
+      if (!p || !p.isDown) continue;
+      if (p.x < this._zoneW && p.y > this._zoneY) {
+        moveDir = p.x < this._zoneW * 0.5 ? -1 : 1;
+        break;
+      }
+    }
+
+    this.game.events.emit('touch-left', moveDir === -1);
+    this.game.events.emit('touch-right', moveDir === 1);
+    if (this._arrowLeft) this._arrowLeft.setAlpha(moveDir === -1 ? 0.9 : 0.35);
+    if (this._arrowRight) this._arrowRight.setAlpha(moveDir === 1 ? 0.9 : 0.35);
   }
 
   _buildHUD(W, H) {

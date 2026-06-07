@@ -152,57 +152,63 @@ export class TitleScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const cards = DIALOGUE.INTRO_CARDS;
-    let idx = 0;
 
-    // Fade out title
-    this.cameras.main.fade(400, 0, 0, 0);
+    if (this._introStarted) return;
+    this._introStarted = true;
 
-    this.time.delayedCall(420, () => {
-      // Clear scene and show cards
-      this.children.list.slice().forEach(c => c.destroy());
+    // Black overlay we fully control — avoids fragile camera fade/flash state
+    const overlay = this.add.rectangle(0, 0, W, H, 0x030308)
+      .setOrigin(0, 0)
+      .setDepth(500)
+      .setAlpha(0);
 
-      const bg = this.add.graphics();
-      bg.fillStyle(0x030308, 1);
-      bg.fillRect(0, 0, W, H);
+    const cardText = this.add.text(W / 2, H / 2, '', {
+      fontFamily: 'monospace',
+      fontSize: '9px',
+      color: '#c8c8b0',
+      align: 'center',
+      wordWrap: { width: W - 60 },
+      lineSpacing: 6,
+      resolution: 2,
+    }).setOrigin(0.5).setDepth(501).setAlpha(0);
 
-      const cardText = this.add.text(W / 2, H / 2, '', {
-        fontFamily: 'monospace',
-        fontSize: '9px',
-        color: '#c8c8b0',
-        align: 'center',
-        wordWrap: { width: W - 60 },
-        lineSpacing: 6,
-        resolution: 2,
-      }).setOrigin(0.5);
-
-      const showCard = (i) => {
-        if (i >= cards.length) {
-          this.cameras.main.fade(600, 0, 0, 0);
-          this.time.delayedCall(620, () => this._launchGame());
-          return;
-        }
-        const card = cards[i];
-        cardText.setAlpha(0).setText(card.text);
+    const showCard = (i) => {
+      if (i >= cards.length) {
         this.tweens.add({
           targets: cardText,
-          alpha: 1,
-          duration: 600,
-          ease: 'Sine.easeOut',
-          onComplete: () => {
-            this.time.delayedCall(card.pause || 2000, () => {
-              this.tweens.add({
-                targets: cardText,
-                alpha: 0,
-                duration: 500,
-                onComplete: () => showCard(i + 1),
-              });
-            });
-          },
+          alpha: 0,
+          duration: 400,
+          onComplete: () => this._launchGame(),
         });
-      };
+        return;
+      }
+      const card = cards[i];
+      cardText.setAlpha(0).setText(card.text);
+      this.tweens.add({
+        targets: cardText,
+        alpha: 1,
+        duration: 600,
+        ease: 'Sine.easeOut',
+        onComplete: () => {
+          this.time.delayedCall(card.pause || 2000, () => {
+            this.tweens.add({
+              targets: cardText,
+              alpha: 0,
+              duration: 500,
+              onComplete: () => showCard(i + 1),
+            });
+          });
+        },
+      });
+    };
 
-      this.cameras.main.flash(200, 0, 0, 0);
-      this.time.delayedCall(200, () => showCard(0));
+    // Fade the black overlay in over the title, then play the cards
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      duration: 500,
+      ease: 'Sine.easeIn',
+      onComplete: () => showCard(0),
     });
   }
 
